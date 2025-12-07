@@ -1,4 +1,4 @@
-name: RDP via Tailscale (Aggressive Attempt)
+name: RDP via Tailscale (Minimal Attempt)
 
 on:
   workflow_dispatch:
@@ -9,19 +9,21 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Setup and install ALL dependencies
+      - name: Install minimal packages only
         run: |
           sudo apt-get update -y
-          # Install EVERYTHING that might be needed
+          # Install only essential packages that definitely exist
           sudo apt-get install -y \
-            xrdp xorgxrdp \
-            xfce4 xfce4-goodies xfce4-terminal xfce4-session \
-            xvfb xserver-xorg-video-dummy xserver-xorg-input-void \
-            dbus-x11 pulseaudio \
-            mate-desktop-environment \
-            ubuntu-mate-core \
-            firefox \
-            curl gnupg lsb-release sudo net-tools ufw openssl
+            xrdp \
+            xfce4 \
+            xfce4-terminal \
+            xvfb \
+            dbus-x11 \
+            curl \
+            gnupg \
+            net-tools \
+            openssl \
+            sudo
 
       - name: Create RDP user
         run: |
@@ -33,59 +35,38 @@ jobs:
           echo "RDP_CREDS=User: $USERNAME | Password: $PASSWORD" >> $GITHUB_ENV
           echo "USERNAME=$USERNAME" >> $GITHUB_ENV
 
-      - name: Configure XFCE for headless
+      - name: Setup XFCE session
         run: |
-          # Create .xsession with multiple fallbacks
+          # Minimal .xsession that might work
           echo '#!/bin/bash' | sudo tee /home/$USERNAME/.xsession
-          echo 'export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"' | sudo tee -a /home/$USERNAME/.xsession
-          echo 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' | sudo tee -a /home/$USERNAME/.xsession
           echo 'export DISPLAY=:99' | sudo tee -a /home/$USERNAME/.xsession
-          echo 'startxfce4 2>&1 | tee /tmp/xfce-start.log' | sudo tee -a /home/$USERNAME/.xsession
+          echo 'export XDG_SESSION_TYPE=x11' | sudo tee -a /home/$USERNAME/.xsession
+          echo 'exec startxfce4' | sudo tee -a /home/$USERNAME/.xsession
           sudo chmod +x /home/$USERNAME/.xsession
           sudo chown $USERNAME:$USERNAME /home/$USERNAME/.xsession
 
-          # Create alternative desktop entry
-          echo "[Desktop Entry]" | sudo tee /usr/share/xsessions/xfce.desktop
-          echo "Name=Xfce Session" | sudo tee -a /usr/share/xsessions/xfce.desktop
-          echo "Exec=startxfce4" | sudo tee -a /usr/share/xsessions/xfce.desktop
-          echo "TryExec=startxfce4" | sudo tee -a /usr/share/xsessions/xfce.desktop
-
-      - name: Setup virtual display system
+      - name: Start virtual display
         run: |
-          # Create Xvfb startup script
-          echo '#!/bin/bash' | sudo tee /usr/local/bin/start-xvfb
-          echo 'Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &' | sudo tee -a /usr/local/bin/start-xvfb
-          echo 'sleep 3' | sudo tee -a /usr/local/bin/start-xvfb
-          echo 'export DISPLAY=:99' | sudo tee -a /usr/local/bin/start-xvfb
-          sudo chmod +x /usr/local/bin/start-xvfb
+          # Start Xvfb in background
+          Xvfb :99 -screen 0 1024x768x16 &
+          sleep 3
+          export DISPLAY=:99
 
-      - name: Configure xrdp aggressively
+      - name: Configure and start xrdp
         run: |
-          # Backup original config
-          sudo cp /etc/xrdp/xrdp.ini /etc/xrdp/xrdp.ini.bak
+          # Make xrdp use Xvfb
+          sudo sed -i 's/use_vsock=false/use_vsock=false\nparam=Xvfb\nparam=:99/' /etc/xrdp/xrdp.ini
           
-          # Use a simpler session manager
-          sudo sed -i 's/use_vsock=false/use_vsock=false\nparam=-f\nparam=\/usr\/bin\/Xorg/' /etc/xrdp/xrdp.ini
+          # Start xrdp services
+          sudo systemctl start xrdp
+          sudo systemctl start xrdp-sesman
           
-          # Enable all security layers
-          sudo sed -i 's/security_layer=.*/security_layer=rdp/' /etc/xrdp/xrdp.ini
-          
-          # Disable encryption (for testing)
-          sudo sed -i 's/crypt_level=.*/crypt_level=none/' /etc/xrdp/xrdp.ini
-          
-          # Allow all users
-          sudo sed -i 's/username=ask/username=ask\nallow=\*/' /etc/xrdp/xrdp.ini
-
-          # Restart xrdp
-          sudo systemctl restart xrdp
-          sudo systemctl restart xrdp-sesman
-          
-          # Allow firewall
-          sudo ufw allow 3389/tcp
+          # Allow port (firewall is usually off on GitHub runners)
+          sudo ufw allow 3389 2>/dev/null || true
 
       - name: Install Tailscale
         run: |
-          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo gpg --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
           echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/tailscale.list
           sudo apt-get update
           sudo apt-get install -y tailscale
@@ -93,80 +74,52 @@ jobs:
       - name: Start Tailscale
         run: |
           sudo tailscaled &
-          sleep 10
+          sleep 5
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$GITHUB_RUN_ID
           TS_IP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
-          echo "RDP_PORT=3389" >> $GITHUB_ENV
 
-      - name: Start everything
+      - name: Test connection
         run: |
-          # Start Xvfb
-          /usr/local/bin/start-xvfb &
-          sleep 5
+          echo "=== CONNECTION TEST ==="
+          echo "Tailscale IP: $TAILSCALE_IP"
           
-          # Start DBus
-          sudo mkdir -p /run/user/$(id -u $USERNAME)
-          sudo chown $USERNAME:$USERNAME /run/user/$(id -u $USERNAME)
-          sudo -u $USERNAME dbus-launch --sh-syntax > /tmp/dbus.env
+          # Check if services are running
+          echo "Checking services:"
+          sudo systemctl is-active xrdp && echo "✓ xrdp is running" || echo "✗ xrdp is NOT running"
+          sudo systemctl is-active xrdp-sesman && echo "✓ xrdp-sesman is running" || echo "✗ xrdp-sesman is NOT running"
           
-          # Start xrdp session manager
-          sudo systemctl restart xrdp-sesman
+          # Check if port is listening
+          echo "Checking port 3389:"
+          sudo netstat -tulpn | grep 3389 && echo "✓ Port 3389 is listening" || echo "✗ Port 3389 is NOT listening"
           
-          # Test RDP port
-          echo "Testing RDP port..."
-          timeout 30 bash -c 'until nc -z localhost 3389; do sleep 1; done' && echo "RDP is listening!" || echo "RDP failed to start"
+          # Check Xvfb
+          echo "Checking Xvfb:"
+          ps aux | grep Xvfb | grep -v grep && echo "✓ Xvfb is running" || echo "✗ Xvfb is NOT running"
 
       - name: Display connection info
         run: |
+          echo ""
           echo "========================================="
-          echo "RDP CONNECTION INFORMATION"
+          echo "ATTEMPT RDP CONNECTION WITH:"
           echo "========================================="
-          echo "Tailscale IP: $TAILSCALE_IP"
+          echo "IP Address: $TAILSCALE_IP"
           echo "Port: 3389"
           echo "Username: $USERNAME"
-          echo "Password: $(echo $RDP_CREDS | cut -d'|' -f2 | cut -d':' -f2)"
+          echo "Password: $(echo $RDP_CREDS | sed 's/.*Password: //')"
           echo ""
-          echo "Use Microsoft Remote Desktop or any RDP client"
-          echo "Connection will likely be unstable due to GitHub runner limitations"
+          echo "If connection fails, it's because GitHub runners"
+          echo "cannot run GUI desktop environments properly."
           echo "========================================="
-          
-          # Check if xrdp is running
-          if systemctl is-active --quiet xrdp; then
-            echo "✓ xrdp service is running"
-          else
-            echo "✗ xrdp service is NOT running"
-          fi
-          
-          if netstat -tulpn | grep -q 3389; then
-            echo "✓ RDP port 3389 is listening"
-          else
-            echo "✗ RDP port 3389 is NOT listening"
-          fi
 
-      - name: Keep alive with diagnostics
+      - name: Keep runner alive
         run: |
-          counter=0
-          while true; do
-            counter=$((counter + 1))
-            echo "[$(date)] RDP Session active - Check #$counter"
-            echo "Checking services..."
-            
-            # Monitor services
-            if ! systemctl is-active --quiet xrdp; then
-              echo "WARNING: xrdp service stopped, trying to restart..."
-              sudo systemctl restart xrdp
-            fi
-            
-            if ! systemctl is-active --quiet xrdp-sesman; then
-              echo "WARNING: xrdp-sesman stopped, trying to restart..."
-              sudo systemctl restart xrdp-sesman
-            fi
-            
-            # Check for running X processes
-            echo "X processes:"
-            ps aux | grep -E "(Xvfb|Xorg|xrdp)" | grep -v grep || echo "No X processes found"
-            
-            echo "---"
-            sleep 60
+          # Just keep the runner alive - let user try to connect
+          echo "Runner will stay alive for 60 minutes..."
+          echo "Press Ctrl+C in workflow to cancel early"
+          
+          # Simple keep-alive loop
+          for i in {1..720}; do  # 720 * 5 seconds = 60 minutes
+            echo "[$(date)] Runner active - Minute $((i/12)) of 60"
+            sleep 5
           done

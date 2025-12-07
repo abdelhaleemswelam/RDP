@@ -1,36 +1,63 @@
-name: SSH-Ubuntu-Tailscale
+name: Secure RDP via Tailscale (Ubuntu)
+
 on:
   workflow_dispatch:
 
 jobs:
-  ssh:
+  secure-rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
 
     steps:
-      - name: Create SSH User
+      - name: Update and install dependencies
         run: |
-          sudo useradd -m rsshuser
-          sudo mkdir -p /home/rsshuser/.ssh
-          sudo chown -R rsshuser:rsshuser /home/rsshuser/.ssh
+          sudo apt-get update -y
+          sudo apt-get install -y xfce4 xfce4-goodies xrdp curl gnupg lsb-release sudo net-tools
+
+      - name: Create RDP user with secure password
+        run: |
+          USERNAME="rdpuser"
+          PASSWORD=$(openssl rand -base64 12)
+          sudo useradd -m -s /bin/bash $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo $USERNAME
+          echo "RDP_CREDS=User: $USERNAME | Password: $PASSWORD" >> $GITHUB_ENV
+
+      - name: Configure xrdp
+        run: |
+          # Use XFCE for xrdp sessions
+          echo "startxfce4" > /home/$USERNAME/.xsession
+          sudo systemctl enable xrdp --now
+          sudo ufw allow 3389
 
       - name: Install Tailscale
         run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+          sudo apt-get update
+          sudo apt-get install -y tailscale
 
-      - name: Start Tailscale SSH
+      - name: Start Tailscale
         run: |
-          sudo tailscale up \
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
-            --ssh \
-            --hostname=gh-ubuntu-${{ github.run_id }}
+          sudo tailscaled &
+          sleep 5
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$GITHUB_RUN_ID
+          TS_IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
 
-      - name: Show Tailscale IP
+      - name: Verify RDP accessibility
         run: |
-          echo "TAILSCALE_IP=$(tailscale ip -4)" >> $GITHUB_ENV
-          echo "Runner Tailscale IP: $(tailscale ip -4)"
+          echo "Tailscale IP: $TAILSCALE_IP"
+          nc -zv $TAILSCALE_IP 3389 || { echo "RDP port not reachable"; exit 1; }
+          echo "RDP connectivity successful!"
 
-      - name: Keep alive
+      - name: Maintain RDP connection
         run: |
-          echo "Runner is available via Tailscale SSH."
-          while true; do sleep 300; done
+          echo "=== RDP ACCESS ==="
+          echo "Address: $TAILSCALE_IP"
+          echo "Username: $RDP_CREDS"
+          echo "=================="
+          while true; do
+              echo "[$(date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              sleep 300
+          done

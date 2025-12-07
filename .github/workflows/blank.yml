@@ -1,0 +1,42 @@
+name: RDP-Ubuntu
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Install Desktop + XRDP
+        run: |
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies xrdp
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+
+      - name: Create RDP user
+        run: |
+          sudo useradd -m rdpuser
+          echo "rdpuser:Password123!" | sudo chpasswd
+          sudo usermod -aG sudo rdpuser
+          echo "RDP_PASSWORD=Password123!" >> $GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Start Tailscale
+        run: |
+          sudo tailscale up \
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+            --hostname=gh-ubuntu-${{ github.run_id }}
+
+      - name: Show IP
+        run: |
+          echo "TAILSCALE_IP=$(tailscale ip -4)" >> $GITHUB_ENV
+          echo "Connect using: $GITHUB_ENV"
+
+      - name: Keep alive
+        run: |
+          while true; do sleep 300; done

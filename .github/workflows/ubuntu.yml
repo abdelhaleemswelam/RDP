@@ -25,8 +25,8 @@ jobs:
 
       - name: Configure xrdp
         run: |
-          # Use XFCE for xrdp sessions
-          echo "startxfce4" > /home/$USERNAME/.xsession
+          # Use XFCE for xrdp sessions (write as the RDP user)
+          sudo -u $USERNAME bash -c 'echo "startxfce4" > ~/.xsession'
           sudo systemctl enable xrdp --now
           sudo ufw allow 3389
 

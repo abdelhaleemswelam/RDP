@@ -1,0 +1,47 @@
+name: SSH-Ubuntu-Tailscale
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Start Tailscale with SSH enabled
+        run: |
+          sudo tailscale up \
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+            --ssh \
+            --accept-routes \
+            --hostname=gh-ubuntu-${{ github.run_id }}
+
+      - name: Get Tailscale IP
+        run: |
+          echo "TAILSCALE_IP=$(tailscale ip -4)" >> $GITHUB_ENV
+          echo "Runner Tailscale IP: $(tailscale ip -4)"
+
+      - name: Show connection info
+        run: |
+          echo ""
+          echo "==================================="
+          echo " Use this to SSH into the runner:"
+          echo ""
+          echo "    ssh ubuntu@${TAILSCALE_IP}"
+          echo ""
+          echo " NOTE: No password needed"
+          echo " Tailscale uses SSH certificates"
+          echo "==================================="
+          echo ""
+
+      - name: Keep runner alive
+        run: |
+          echo "Runner is now available via Tailscale SSH."
+          echo "Press CTRL + C or stop the workflow to disconnect."
+          while true; do
+            sleep 300
+          done

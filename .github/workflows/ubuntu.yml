@@ -27,9 +27,7 @@ jobs:
             gnupg \
             net-tools \
             openssl \
-            sudo \
-            lightdm \
-            x11vnc
+            sudo
 
       - name: Create RDP user
         run: |
@@ -69,8 +67,8 @@ jobs:
           # Backup original config
           sudo cp /etc/xrdp/xrdp.ini /etc/xrdp/xrdp.ini.backup
           
-          # Configure xrdp to use Xvfb
-          sudo tee /etc/xrdp/xrdp.ini > /dev/null << 'EOF'
+          # Configure xrdp to use Xvfb - REMOVE leading spaces from HEREDOC
+          cat << 'EOF' | sudo tee /etc/xrdp/xrdp.ini > /dev/null
           [globals]
           bitmap_cache=yes
           bitmap_compression=yes
@@ -88,8 +86,8 @@ jobs:
           port=-1
           EOF
           
-          # Configure sesman to use Xvfb
-          sudo tee /etc/xrdp/sesman.ini > /dev/null << 'EOF'
+          # Configure sesman to use Xvfb - REMOVE leading spaces from HEREDOC
+          cat << 'EOF' | sudo tee /etc/xrdp/sesman.ini > /dev/null
           [Globals]
           ListenAddress=127.0.0.1
           ListenPort=3350
@@ -119,8 +117,8 @@ jobs:
 
       - name: Start Xvfb with proper configuration
         run: |
-          # Create Xvfb startup script
-          sudo tee /usr/local/bin/start-xvfb-session > /dev/null << 'EOF'
+          # Create Xvfb startup script - REMOVE leading spaces from HEREDOC
+          cat << 'EOF' | sudo tee /usr/local/bin/start-xvfb-session > /dev/null
           #!/bin/bash
           # Kill any existing Xvfb
           pkill Xvfb 2>/dev/null
@@ -147,15 +145,20 @@ jobs:
           
           sudo chmod +x /usr/local/bin/start-xvfb-session
 
-      - name: Start everything in correct order
+      - name: Start everything in correct order (FIXED)
         run: |
-          # 1. Start Xvfb session
-          /usr/local/bin/start-xvfb-session &
-          sleep 5
+          # Kill any existing X servers and xrdp processes FIRST
+          sudo pkill -9 Xvfb Xorg xrdp xrdp-sesman 2>/dev/null || true
+          sleep 2
           
-          # 2. Start xrdp services
-          sudo systemctl restart xrdp-sesman
-          sudo systemctl restart xrdp
+          # 1. Start Xvfb session
+          /usr/local/bin/start-xvfb-session > /tmp/xvfb.log 2>&1 &
+          sleep 8
+          
+          # 2. Start xrdp services WITHOUT systemctl (use direct commands)
+          sudo xrdp-sesman --nodaemon > /tmp/xrdp-sesman.log 2>&1 &
+          sleep 3
+          sudo xrdp --nodaemon > /tmp/xrdp.log 2>&1 &
           sleep 3
           
           # 3. Verify everything is running
@@ -166,8 +169,8 @@ jobs:
           echo "XFCE processes:"
           ps aux | grep xfce | grep -v grep || echo "None found"
           echo ""
-          echo "xrdp status:"
-          sudo systemctl status xrdp --no-pager | head -20
+          echo "xrdp processes:"
+          ps aux | grep -E "(xrdp|xrdp-sesman)" | grep -v grep || echo "None found"
           echo ""
           echo "Listening ports:"
           sudo netstat -tulpn | grep -E '(:3389|:3350)' || echo "No ports found"
@@ -181,15 +184,21 @@ jobs:
 
       - name: Start Tailscale
         run: |
-          sudo tailscaled &
-          sleep 5
+          sudo tailscaled > /tmp/tailscaled.log 2>&1 &
+          sleep 8
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$GITHUB_RUN_ID
           TS_IP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
           
           # Test RDP port
           echo "Testing RDP connectivity..."
-          timeout 10 bash -c 'until nc -z localhost 3389; do sleep 1; done' && echo "✓ RDP port is listening" || echo "✗ RDP port not listening"
+          if timeout 10 bash -c 'until nc -z localhost 3389; do sleep 1; done'; then
+            echo "✓ RDP port is listening"
+          else
+            echo "⚠️ RDP port not listening - checking logs"
+            echo "xrdp log tail:"
+            tail -10 /tmp/xrdp.log 2>/dev/null || echo "No xrdp log"
+          fi
 
       - name: Display troubleshooting info
         run: |
@@ -205,48 +214,57 @@ jobs:
           echo "TROUBLESHOOTING:"
           echo "1. If black screen: Wait 30 seconds after connecting"
           echo "2. Try reconnecting 2-3 times"
-          echo "3. Check xrdp logs: sudo tail -f /var/log/xrdp-sesman.log"
+          echo "3. Press Ctrl+Alt+Enter for fullscreen toggle"
           echo "========================================="
           
           # Show logs
           echo ""
           echo "Recent xrdp logs:"
-          sudo tail -20 /var/log/xrdp.log 2>/dev/null || echo "No xrdp.log found"
+          tail -20 /tmp/xrdp.log 2>/dev/null || echo "No xrdp.log found"
           echo ""
           echo "Recent sesman logs:"
-          sudo tail -20 /var/log/xrdp-sesman.log 2>/dev/null || echo "No sesman.log found"
+          tail -20 /tmp/xrdp-sesman.log 2>/dev/null || echo "No sesman.log found"
+          echo ""
+          echo "Xvfb logs:"
+          tail -10 /tmp/xvfb.log 2>/dev/null || echo "No xvfb.log found"
 
       - name: Keep alive with monitoring
         run: |
           echo "Monitoring system for 60 minutes..."
           echo "Press Ctrl+C in workflow to cancel"
           
-          for i in {1..720}; do
+          for i in $(seq 1 720); do
             if [ $((i % 12)) -eq 0 ]; then  # Every minute
               minute=$((i/12))
               echo ""
               echo "[$(date)] Minute $minute/60 - System Status:"
               
-              # Check critical services
-              if ps aux | grep -q Xvfb && ! ps aux | grep -q grep; then
+              # Check Xvfb
+              if ps aux | grep -q Xvfb; then
                 echo "  ✓ Xvfb running"
               else
-                echo "  ✗ Xvfb NOT running - attempting restart"
-                pkill Xvfb 2>/dev/null
-                Xvfb :99 -screen 0 1280x720x24 &
+                echo "  ⚠️ Xvfb NOT running - attempting restart"
+                /usr/local/bin/start-xvfb-session > /tmp/xvfb-restart.log 2>&1 &
+                sleep 2
               fi
               
-              if sudo systemctl is-active --quiet xrdp; then
-                echo "  ✓ xrdp running"
+              # Check xrdp processes
+              if ps aux | grep -q xrdp && ps aux | grep -q xrdp-sesman; then
+                echo "  ✓ xrdp processes running"
               else
-                echo "  ✗ xrdp NOT running - restarting"
-                sudo systemctl restart xrdp
+                echo "  ⚠️ xrdp processes missing - restarting"
+                sudo pkill -9 xrdp xrdp-sesman 2>/dev/null || true
+                sudo xrdp-sesman --nodaemon > /tmp/xrdp-sesman-restart.log 2>&1 &
+                sleep 2
+                sudo xrdp --nodaemon > /tmp/xrdp-restart.log 2>&1 &
+                sleep 2
               fi
               
-              if sudo netstat -tulpn | grep -q 3389; then
+              # Check port
+              if netstat -tulpn | grep -q 3389; then
                 echo "  ✓ Port 3389 listening"
               else
-                echo "  ✗ Port 3389 NOT listening"
+                echo "  ⚠️ Port 3389 NOT listening"
               fi
             fi
             

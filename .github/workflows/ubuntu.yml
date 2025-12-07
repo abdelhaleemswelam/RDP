@@ -174,7 +174,16 @@ jobs:
           echo ""
           echo "Listening ports:"
           sudo netstat -tulpn | grep -E '(:3389|:3350)' || echo "No ports found"
-
+      - name: Alternative XFCE startup (if black screen persists)
+        run: |
+          # Try a simpler XFCE startup
+          export DISPLAY=:99
+          # Kill any existing XFCE
+          pkill -f startxfce4 2>/dev/null || true
+          sleep 2
+          # Start minimal XFCE
+          startxfce4 --disable-sm > /tmp/xfce-minimal.log 2>&1 &
+          echo "Alternative XFCE started"
       - name: Install Tailscale
         run: |
           curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null

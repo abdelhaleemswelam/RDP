@@ -9,15 +9,21 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Enable Screen Sharing (VNC)
+      - name: Enable Screen Sharing (VNC) with password
         run: |
-          # Enable Screen Sharing
+          # Activate Remote Management (Screen Sharing)
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
               -activate -configure -access -on -restart -agent -privs -all
 
-          # Allow VNC viewers with a password
+          # Generate a random 12-character password
           VNC_PASS=$(openssl rand -base64 12)
-          sudo defaults write /Library/Preferences/com.apple.VNCSettings VNCPassword -data $(echo -n $VNC_PASS | perl -we 'print pack("H*", unpack("H*",<>))')
+
+          # Configure VNC password using kickstart (modern macOS supported)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+              -configure -clientopts -setvnclegacy -vnclegacy yes \
+              -clientopts -setvncpw -vncpw $VNC_PASS \
+              -restart -agent
+
           echo "VNC_CREDS=User: $(whoami) | Password: $VNC_PASS" >> $GITHUB_ENV
 
       - name: Create Admin User (Optional)
@@ -52,7 +58,7 @@ jobs:
           echo "=== VNC ACCESS ==="
           echo "Address: $TAILSCALE_IP"
           echo "Username: $USERNAME"
-          echo "Password: $RDP_CREDS"
+          echo "Password: $VNC_CREDS"
           echo "=================="
           while true; do
               echo "[$(date)] VNC Active - Use Ctrl+C to terminate workflow"

@@ -35,11 +35,9 @@ jobs:
 
       - name: Install Tailscale
         run: |
-          curl -fsSL https://pkgs.tailscale.com/stable/Tailscale-1.90.9-macos.pkg -o /tmp/tailscale.dmg
-          hdiutil attach /tmp/tailscale.dmg
-          sudo installer -pkg /Volumes/Tailscale\ Installer/Tailscale.pkg -target /
-          hdiutil detach /Volumes/Tailscale\ Installer
-          rm /tmp/tailscale.dmg
+          curl -fsSL https://pkgs.tailscale.com/stable/Tailscale-1.90.9-macos.pkg -o /tmp/tailscale.pkg
+          sudo installer -pkg /tmp/tailscale.pkg -target /
+          rm /tmp/tailscale.pkg
 
       - name: Establish Tailscale Connection
         run: |

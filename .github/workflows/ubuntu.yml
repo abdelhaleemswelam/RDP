@@ -1,4 +1,4 @@
-name: Secure RDP via Tailscale (Ubuntu)
+name: Secure RDP via Tailscale (Ubuntu Headless)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
       - name: Update and install dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y xfce4 xfce4-goodies xrdp curl gnupg lsb-release sudo net-tools ufw openssl
+          sudo apt-get install -y xfce4 xfce4-terminal xfce4-session xrdp xvfb xorgxrdp curl gnupg lsb-release sudo net-tools ufw openssl dbus-x11
 
       - name: Create RDP user with secure password
         run: |
@@ -23,39 +23,32 @@ jobs:
           sudo usermod -aG sudo $USERNAME
           echo "RDP_CREDS=User: $USERNAME | Password: $PASSWORD" >> $GITHUB_ENV
 
-      - name: Configure xrdp
+      - name: Configure xrdp for headless session
         run: |
-          # Use XFCE for xrdp sessions
+          # Set XFCE session for RDP
           echo "startxfce4" | sudo tee /home/$USERNAME/.xsession
           sudo chown $USERNAME:$USERNAME /home/$USERNAME/.xsession
 
+          # Start Xvfb display for headless session
+          export DISPLAY=:99
+          sudo Xvfb :99 -screen 0 1280x720x16 &
+
           # Enable and start xrdp
           sudo systemctl enable xrdp --now
-
-          # Allow RDP port through firewall
           sudo ufw allow 3389
 
       - name: Install Tailscale
         run: |
-          # Add Tailscale GPG key properly
           curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo gpg --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
-          
-          # Add Tailscale repository with signed-by
           echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/tailscale.list
-          
           sudo apt-get update
           sudo apt-get install -y tailscale
 
       - name: Start Tailscale
         run: |
-          # Start the tailscale daemon in background
           sudo tailscaled &
           sleep 5
-
-          # Bring up Tailscale using your auth key
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$GITHUB_RUN_ID
-
-          # Save the assigned Tailscale IP
           TS_IP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
 

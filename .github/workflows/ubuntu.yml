@@ -71,79 +71,79 @@ jobs:
           
           # Configure xrdp to use Xvfb
           sudo tee /etc/xrdp/xrdp.ini > /dev/null << 'EOF'
-[globals]
-bitmap_cache=yes
-bitmap_compression=yes
-port=3389
-crypt_level=low
-channel_code=1
-max_bpp=24
+          [globals]
+          bitmap_cache=yes
+          bitmap_compression=yes
+          port=3389
+          crypt_level=low
+          channel_code=1
+          max_bpp=24
 
-[xrdp1]
-name=Xvfb
-lib=libxup.so
-username=ask
-password=ask
-ip=127.0.0.1
-port=-1
-EOF
+          [xrdp1]
+          name=Xvfb
+          lib=libxup.so
+          username=ask
+          password=ask
+          ip=127.0.0.1
+          port=-1
+          EOF
           
           # Configure sesman to use Xvfb
           sudo tee /etc/xrdp/sesman.ini > /dev/null << 'EOF'
-[Globals]
-ListenAddress=127.0.0.1
-ListenPort=3350
-EnableUserWindowManager=true
-UserWindowManager=startxfce4
+          [Globals]
+          ListenAddress=127.0.0.1
+          ListenPort=3350
+          EnableUserWindowManager=true
+          UserWindowManager=startxfce4
 
-[Security]
-AllowRootLogin=true
-MaxLoginRetry=4
-TerminalServerUsers=tsusers
-TerminalServerAdmins=tsadmins
-AlwaysGroupCheck=false
+          [Security]
+          AllowRootLogin=true
+          MaxLoginRetry=4
+          TerminalServerUsers=tsusers
+          TerminalServerAdmins=tsadmins
+          AlwaysGroupCheck=false
 
-[Sessions]
-X11DisplayOffset=10
-MaxSessions=50
-KillDisconnected=false
-IdleTimeLimit=0
-DisconnectedTimeLimit=0
+          [Sessions]
+          X11DisplayOffset=10
+          MaxSessions=50
+          KillDisconnected=false
+          IdleTimeLimit=0
+          DisconnectedTimeLimit=0
 
-[Logging]
-LogFile=/var/log/xrdp-sesman.log
-LogLevel=DEBUG
-EnableSyslog=true
-SyslogLevel=DEBUG
-EOF
+          [Logging]
+          LogFile=/var/log/xrdp-sesman.log
+          LogLevel=DEBUG
+          EnableSyslog=true
+          SyslogLevel=DEBUG
+          EOF
 
       - name: Start Xvfb with proper configuration
         run: |
           # Create Xvfb startup script
           sudo tee /usr/local/bin/start-xvfb-session > /dev/null << 'EOF'
-#!/bin/bash
-# Kill any existing Xvfb
-pkill Xvfb 2>/dev/null
+          #!/bin/bash
+          # Kill any existing Xvfb
+          pkill Xvfb 2>/dev/null
 
-# Start Xvfb with proper configuration
-Xvfb :99 -screen 0 1280x720x24 -ac +extension RANDR +extension GLX +render -noreset &
-XVFB_PID=$!
+          # Start Xvfb with proper configuration
+          Xvfb :99 -screen 0 1280x720x24 -ac +extension RANDR +extension GLX +render -noreset &
+          XVFB_PID=$!
 
-# Wait for Xvfb to start
-sleep 3
+          # Wait for Xvfb to start
+          sleep 3
 
-# Set DISPLAY
-export DISPLAY=:99
+          # Set DISPLAY
+          export DISPLAY=:99
 
-# Start DBus session
-eval $(dbus-launch --sh-syntax)
+          # Start DBus session
+          eval $(dbus-launch --sh-syntax)
 
-# Start XFCE in background
-startxfce4 &
+          # Start XFCE in background
+          startxfce4 &
 
-# Keep script running
-wait $XVFB_PID
-EOF
+          # Keep script running
+          wait $XVFB_PID
+          EOF
           
           sudo chmod +x /usr/local/bin/start-xvfb-session
 
